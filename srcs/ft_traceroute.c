@@ -13,7 +13,7 @@
 #include <signal.h>
 
 #include <libft.h>
-#include "./ft_ping.h"
+#include "./ft_traceroute.h"
 
 struct s_ping_config g_ping_config;
 static int msg_count = 0;
@@ -26,38 +26,9 @@ double get_elapsed_ms(struct timeval *start, struct timeval *end)
 	return elapsed_secs * 1000.0 + elapsed_usecs / 1000.0;
 }
 
-void display_stats()
-{
-	struct timeval now;
-
-	if (gettimeofday(&now, NULL) == -1)
-	{
-		fprintf(stderr, "ft_ping: An error occured while fetching end time: %s\n", strerror(errno));
-		exit(EXIT_FAILURE);
-	}
-
-	double program_total_time_ms = get_elapsed_ms(&g_ping_config.start_time, &now);
-
-	printf("\n--- %s ping statistics ---\n", g_ping_config.hostname);
-	int pkt_losts = g_ping_config.stats.transmitted_pkts - g_ping_config.stats.received_pkts;
-	double pkt_loss = g_ping_config.stats.transmitted_pkts == 0 ? 0 : pkt_losts / (double) g_ping_config.stats.transmitted_pkts;
-	printf("%zu packets transmitted, %zu received, %d%% packet loss, time %dms\n", g_ping_config.stats.transmitted_pkts, g_ping_config.stats.received_pkts, (int)(pkt_loss * 100), (int)program_total_time_ms);
-	// RTT = Round Trip Time
-	printf("rtt min/avg/max = %.03f/%.03f/%.03f ms\n", g_ping_config.stats.min_ping_time, g_ping_config.stats.avg_ping_time, g_ping_config.stats.max_ping_time);
-}
-
-void handle_sigint(int signal)
-{
-	if (signal != SIGINT)
-		return;
-
-	display_stats();
-	exit(EXIT_SUCCESS);
-}
-
 void show_usage()
 {
-	fprintf(stderr, "Usage: ft_ping [options] <destination>\n");
+	fprintf(stderr, "Usage: ft_traceroute [options] <destination>\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Send ICMP ECHO_REQUESTs to <destination>\n");
 	fprintf(stderr, "\n");
@@ -82,7 +53,7 @@ struct addrinfo *get_hostname_address(const char *hostname)
 
 	if ((ret = getaddrinfo(hostname, NULL, NULL, &res)) < 0)
 	{
-		fprintf(stderr, "ft_ping: An error occured while retrieving host '%s' IPv4 address: %s\n", hostname, gai_strerror(ret));
+		fprintf(stderr, "ft_traceroute: An error occured while retrieving host '%s' IPv4 address: %s\n", hostname, gai_strerror(ret));
 		return NULL;
 	}
 
@@ -115,7 +86,8 @@ unsigned short checksum(void *b, int len)
     return result;
 }
 
-void ft_ping(int sockfd, struct addrinfo *address_info)
+// https://www.rfc-editor.org/rfc/rfc1393.html
+void ft_traceroute(int sockfd, struct addrinfo *address_info)
 {
 	void *ptr = &((struct sockaddr_in *) address_info->ai_addr)->sin_addr;
 	inet_ntop(address_info->ai_family, ptr, g_ping_config.hostname_ip_str, sizeof(g_ping_config.hostname_ip_str));
@@ -145,7 +117,7 @@ void ft_ping(int sockfd, struct addrinfo *address_info)
 
 	if (gettimeofday(&start_time, NULL) == -1)
 	{
-		fprintf(stderr, "ft_ping: An error occured while fetching start time: %s\n", strerror(errno));
+		fprintf(stderr, "ft_traceroute: An error occured while fetching start time: %s\n", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
@@ -173,17 +145,33 @@ void ft_ping(int sockfd, struct addrinfo *address_info)
 	received_msg.msg_control = buf;
 	received_msg.msg_controllen = sizeof(buf);
 
-	if (recvmsg(sockfd, &received_msg, 0) == -1)
+	struct sockaddr_in from;
+	ft_bzero(&from, sizeof(from));
+	int fromlen = sizeof(from);
+	if (recvfrom(sockfd, &pkt, sizeof(pkt), 0, (struct sockaddr *)&from, &fromlen) == -1)
 	{
 		if (g_ping_config.flags & FLAG_VERBOSE)
 			fprintf(stderr, "An error occured while receiving packet from %s\n", g_ping_config.hostname_ip_str);
 
-		return;
+
+		// print the address that responded
+		// print each byte of sockaddr with dots
+
+		// return;
 	}
+	for (int i = 0; i < sizeof(from); i++)
+	{
+		printf("%d", ((unsigned char *)&from)[i]);
+		if (i < sizeof(from) - 1)
+			printf(".");
+	
+	}
+	printf("\n");
+	printf("\n%d bytes from %s to\n ", 123, inet_ntoa(from.sin_addr));
 
 	if (gettimeofday(&end_time, NULL) == -1)
 	{
-		fprintf(stderr, "ft_ping: An error occured while fetching end time: %s\n", strerror(errno));
+		fprintf(stderr, "ft_traceroute: An error occured while fetching end time: %s\n", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
@@ -222,23 +210,19 @@ void ft_ping(int sockfd, struct addrinfo *address_info)
 		}
 	}
 
+	// retrieve the last address that responded (eg. if ttl is 1, then we get the first address)
+	char last_ip_str[INET_ADDRSTRLEN];
+	ptr = &((struct sockaddr_in *) received_msg.msg_name)->sin_addr;
+	inet_ntop(address_info->ai_family, ptr, last_ip_str, sizeof(last_ip_str));
+	printf("%s (%s) %.1f ms\n", last_ip_str, g_ping_config.hostname_ip_str, elapsed_ms);
 	printf("%d bytes from %s (%s): icmp_seq=%d ttl=%d time=%.1f ms\n", g_ping_config.packet_size, g_ping_config.hostname, g_ping_config.hostname_ip_str, msg_count, received_ttl, elapsed_ms);
-}
-
-void handle_sigalarm(int signal)
-{
-	if (signal != SIGALRM)
-		return;
-
-	alarm(g_ping_config.ping_interval);
-	ft_ping(g_ping_config.sockfd, g_ping_config.target_addr);
 }
 
 int main(int argc, char **argv)
 {
 	if (argc < 2)
 	{
-		fprintf(stderr, "ft_ping: usage error: Destination address required\n");
+		fprintf(stderr, "ft_traceroute: usage error: Destination address required\n");
 		exit(EXIT_FAILURE);
 	}
 
@@ -247,7 +231,8 @@ int main(int argc, char **argv)
 	g_ping_config.packet_size = DEFAULT_PING_PACKET_SIZE;
 	g_ping_config.ping_interval = DEFAULT_PING_INTERVAL;
 	g_ping_config.recv_timeout = DEFAULT_PING_RECV_TIMEOUT;
-	g_ping_config.ttl = DEFAULT_PING_TTL;
+	g_ping_config.ttl = 64;
+	g_ping_config.recv_ttl = 64;
 
 	for (int i = 1; i < argc; i++)
 	{
@@ -280,20 +265,20 @@ int main(int argc, char **argv)
 		{
 			if (i + 1 >= argc)
 			{
-				fprintf(stderr, "ft_ping: option requires an argument -- 't'\n");
+				fprintf(stderr, "ft_traceroute: option requires an argument -- 't'\n");
 				show_usage();
 				exit(EXIT_FAILURE);
 			}
 
 			if (ft_strlen(argv[i + 1]) > 3)
 			{
-				fprintf(stderr, "ft_ping: invalid argument: '%s': out of range: 0 <= value <= 255\n", argv[i + 1]);
+				fprintf(stderr, "ft_traceroute: invalid argument: '%s': out of range: 0 <= value <= 255\n", argv[i + 1]);
 				exit(EXIT_FAILURE);
 			}
 			int ttl = ft_atoi(argv[i + 1]);
 			if (ttl < 0 || ttl > 255)
 			{
-				fprintf(stderr, "ft_ping: invalid argument: '%s': out of range: 0 <= value <= 255\n", argv[i + 1]);
+				fprintf(stderr, "ft_traceroute: invalid argument: '%s': out of range: 0 <= value <= 255\n", argv[i + 1]);
 				exit(EXIT_FAILURE);
 			}
 
@@ -303,34 +288,23 @@ int main(int argc, char **argv)
 		else
 		{
 			g_ping_config.hostname = argv[i];
-			g_ping_config.hostname = argv[i];
+			// g_ping_config.hostname = argv[i];
 		}
 	}
 
 	if (g_ping_config.hostname == NULL)
 	{
-		fprintf(stderr, "ft_ping: usage error: Destination address required\n");
+		fprintf(stderr, "ft_traceroute: usage error: Destination address required\n");
 		exit(EXIT_FAILURE);
 	}
 
 
 	int sockfd;
-	if (signal(SIGINT, &handle_sigint) == SIG_ERR)
-	{
-		fprintf(stderr, "ft_ping: Cannot set-up SIGINT signal handler: %s\n", strerror(errno));
-		exit(EXIT_FAILURE);
-	}
-
-	if (signal(SIGALRM, &handle_sigalarm)== SIG_ERR)
-	{
-		fprintf(stderr, "ft_ping: Cannot set-up SIGALRM signal handler: %s\n", strerror(errno));
-		exit(EXIT_FAILURE);
-	}
 
 	// https://stackoverflow.com/questions/8290046/icmp-sockets-linux
 	if ((sockfd = socket(PF_INET, SOCK_DGRAM, IPPROTO_ICMP)) == -1)
 	{
-		fprintf(stderr, "ft_ping: An error occured while creating socket: %s\n", strerror(errno));
+		fprintf(stderr, "ft_traceroute: An error occured while creating socket: %s\n", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
@@ -342,25 +316,25 @@ int main(int argc, char **argv)
 
 	if (setsockopt(sockfd, IPPROTO_IP, IP_TTL, &g_ping_config.ttl, sizeof(g_ping_config.ttl)) == -1)
 	{
-		fprintf(stderr, "ft_ping: An error occured while setting socket TTL send: %s\n", strerror(errno));
+		fprintf(stderr, "ft_traceroute: An error occured while setting socket TTL send: %s\n", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
-	if (setsockopt(sockfd, IPPROTO_IP, IP_RECVTTL, &g_ping_config.ttl, sizeof(g_ping_config.ttl)) == -1)
+	if (setsockopt(sockfd, IPPROTO_IP, IP_RECVTTL, &g_ping_config.recv_ttl, sizeof(g_ping_config.recv_ttl)) == -1)
 	{
-		fprintf(stderr, "ft_ping: An error occured while setting socket TTL receive: %s\n", strerror(errno));
+		fprintf(stderr, "ft_traceroute: An error occured while setting socket TTL receive: %s\n", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
 	if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &recv_timeout, sizeof(recv_timeout)) == -1)
 	{
-		fprintf(stderr, "ft_ping: An error occured while setting socket timeout: %s\n", strerror(errno));
+		fprintf(stderr, "ft_traceroute: An error occured while setting socket timeout: %s\n", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
 	if ((g_ping_config.flags & FLAG_DEBUG) && setsockopt(sockfd, SOL_SOCKET, SO_DEBUG, NULL, 0))
 	{
-		fprintf(stderr, "ft_ping: Cannot set socket SO_DEBUG mode: %s\n", strerror(errno));
+		fprintf(stderr, "ft_traceroute: Cannot set socket SO_DEBUG mode: %s\n", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
@@ -378,7 +352,7 @@ int main(int argc, char **argv)
 
 	if (address_info->ai_family != AF_INET)
 	{
-		fprintf(stderr, "ft_ping: The given host address format is not supported\n");
+		fprintf(stderr, "ft_traceroute: The given host address format is not supported\n");
 		close(sockfd);
 		exit(EXIT_FAILURE);
 	}
@@ -388,20 +362,18 @@ int main(int argc, char **argv)
 	struct sockaddr_in *addr = (struct sockaddr_in *)address_info->ai_addr;
 	if (addr->sin_addr.s_addr == INADDR_BROADCAST && (g_ping_config.flags & FLAG_ALLOW_BROADCAST) == 0)
 	{
-		fprintf(stderr, "ft_ping: Do you want to ping broadcast? Then -b. If not, check your firewall rules\n");
+		fprintf(stderr, "ft_traceroute: Do you want to ping broadcast? Then -b. If not, check your firewall rules\n");
 		exit(EXIT_FAILURE);
 	}
 
 	if (gettimeofday(&g_ping_config.start_time, NULL) == -1)
 	{
-		fprintf(stderr, "ft_ping: An error occured while fetching start time: %s\n", strerror(errno));
+		fprintf(stderr, "ft_traceroute: An error occured while fetching start time: %s\n", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
-	printf("PING %s (%s) %d bytes of data.\n", g_ping_config.hostname, g_ping_config.hostname_ip_str, g_ping_config.packet_size);
+	printf("traceroute to %s (%s) %d bytes of data.\n", g_ping_config.hostname, g_ping_config.hostname_ip_str, g_ping_config.packet_size);
 
-	alarm(g_ping_config.ping_interval);
-	ft_ping(sockfd, address_info);
 
-	for(;;);
+	ft_traceroute(sockfd, address_info);
 }

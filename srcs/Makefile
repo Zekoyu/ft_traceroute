@@ -5,7 +5,7 @@ OBJS = $(SRCS:.c=.o)
 LIBFT = ./libft/libft.a
 LIBFT_FOLDER = ./libft
 
-NAME = ft_ping
+NAME = ft_traceroute
 
 CC = gcc
 

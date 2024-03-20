@@ -9,6 +9,7 @@
 #define DEFAULT_PING_INTERVAL 1
 #define DEFAULT_PING_RECV_TIMEOUT 1
 #define DEFAULT_PING_TTL 64
+#define WAIT_TIME_SEC 5
 
 struct s_ping_stats
 {
@@ -28,6 +29,7 @@ struct s_ping_config
 	char *hostname;
 	char hostname_ip_str[INET_ADDRSTRLEN];
 	unsigned char ttl;
+	unsigned char recv_ttl;
 	unsigned int flags;
 	unsigned int recv_timeout;
 	unsigned int ping_interval;

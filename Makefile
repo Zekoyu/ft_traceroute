@@ -1,4 +1,4 @@
-NAME = ft_ping
+NAME = ft_traceroute
 
 run:
 	@echo building container
