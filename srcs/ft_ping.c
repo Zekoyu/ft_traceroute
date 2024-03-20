@@ -16,6 +16,7 @@
 #include "./ft_ping.h"
 
 struct s_ping_config g_ping_config;
+static int msg_count = 0;
 
 double get_elapsed_ms(struct timeval *start, struct timeval *end)
 {
@@ -40,7 +41,7 @@ void display_stats()
 	printf("\n--- %s ping statistics ---\n", g_ping_config.hostname);
 	int pkt_losts = g_ping_config.stats.transmitted_pkts - g_ping_config.stats.received_pkts;
 	double pkt_loss = g_ping_config.stats.transmitted_pkts == 0 ? 0 : pkt_losts / (double) g_ping_config.stats.transmitted_pkts;
-	printf("%d packets transmitted, %d received, %d%% packet loss, time %dms\n", g_ping_config.stats.transmitted_pkts, g_ping_config.stats.received_pkts, (int)(pkt_loss * 100), (int)program_total_time_ms);
+	printf("%zu packets transmitted, %zu received, %d%% packet loss, time %dms\n", g_ping_config.stats.transmitted_pkts, g_ping_config.stats.received_pkts, (int)(pkt_loss * 100), (int)program_total_time_ms);
 	// RTT = Round Trip Time
 	printf("rtt min/avg/max = %.03f/%.03f/%.03f ms\n", g_ping_config.stats.min_ping_time, g_ping_config.stats.avg_ping_time, g_ping_config.stats.max_ping_time);
 }
@@ -120,7 +121,6 @@ void ft_ping(int sockfd, struct addrinfo *address_info)
 	inet_ntop(address_info->ai_family, ptr, g_ping_config.hostname_ip_str, sizeof(g_ping_config.hostname_ip_str));
 
 	struct ping_pkt pkt;
-	int msg_count = 0;
 
 	char pkt_msg[g_ping_config.packet_size - sizeof(struct icmphdr)];
 	// https://github.com/dtaht/twd/blob/master/recvmsg.c
